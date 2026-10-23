@@ -104,7 +104,8 @@ PROGRAM main
         time_IBM       = 0.d0
         time_FEM       = 0.d0
         call tree_collision_streaming_IBM_FEM(blockTreeRoot,time_collision,time_streaming,time_IBM,time_FEM)
-        call calculate_macro_quantities_blocks()
+        ! macroscopic fields are computed lazily by the consumers below; the
+        ! next IBM call recomputes them with the updated volume force
         call calculate_turbulent_statistic_blocks(step,start_ave)
         write(*,*)'Time for collision step:', time_collision
         write(*,*)'Time for streaming step:', time_streaming
@@ -132,8 +133,14 @@ PROGRAM main
         if(DABS(time/flow%Tref-flow%timeInfoDelta*dble(NINT(time/flow%Tref/flow%timeInfoDelta))) <= 0.5d0*dt_fluid/flow%Tref)then
             call write_fluid_flux(blockTreeRoot,time)
             if(flow%inWhichBlock.ge.1 .and. flow%inWhichBlock.le.m_nblocks) then
+#ifdef USE_CUDA
+                ! only the probe stencil leaves the device
+                call write_fluid_probe_gpu(flow%inWhichBlock,time)
+#else
+                call calculate_macro_quantities_iblock(flow%inWhichBlock)
                 call write_fluid_information(time,LBMblks(flow%inWhichBlock)%dh,LBMblks(flow%inWhichBlock)%xmin,LBMblks(flow%inWhichBlock)%ymin,LBMblks(flow%inWhichBlock)%zmin, &
                                                   LBMblks(flow%inWhichBlock)%xDim,LBMblks(flow%inWhichBlock)%yDim,LBMblks(flow%inWhichBlock)%zDim,LBMblks(flow%inWhichBlock)%uuu)
+#endif
             else
                 write(*,'(A,I0,A,I0,A)') 'Warning: invalid flow%inWhichBlock = ', flow%inWhichBlock, '; it must be in [1, ', m_nblocks, '].'
             endif

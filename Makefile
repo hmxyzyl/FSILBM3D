@@ -3,12 +3,18 @@
 # FSILBM3D
 # Copyright (C) 2025-2026 Ankang Gao and contributors
 
-CMP = gfortran# ifort,ifx,gfortran
+CMP = gfortran# nvfortran,ifort,ifx,gfortran
 
 BUILD ?=
+# CUDA is the default build: plain "make" compiles every source file,
+# including src/cuda_lbm.cuf. Use "make GPU=0" for the CPU-only version.
+GPU ?= 1
 
 #######CMP settings###########
-ifeq ($(CMP),ifort)
+ifeq ($(CMP),nvfortran)
+FC = nvfortran
+FFLAGS = -O3 -Mfree -Mpreprocess -mp -cuda -gpu=cc80
+else ifeq ($(CMP),ifort)
 FC = ifort
 FFLAGS = -diag-disable=10448 -fpp -O3 -free -qopenmp -heap-arrays #-real-size 32 -double-size 64
 else ifeq ($(CMP),ifx)
@@ -21,7 +27,7 @@ ifeq ($(BUILD),debug)
 FFLAGS = -cpp -g -O0
 FFLAGS += -ffpe-trap=invalid,zero -fbacktrace -Wall -Wextra -pedantic -Warray-bounds -fbacktrace  -fbounds-check
 endif
-FFLAGS += -Wconversion -Wconversion-extra -ffree-form -ffree-line-length-none -fopenmp -fimplicit-none -finit-real=zero -std=f2003 #-fdefault-real-4 -fdefault-double-8
+FFLAGS += -cpp -Wconversion -Wconversion-extra -ffree-form -ffree-line-length-none -fopenmp -fimplicit-none -finit-real=zero -std=f2003 #-fdefault-real-4 -fdefault-double-8
 endif
 CC = cc
 CPP = c++
@@ -37,6 +43,15 @@ OBJ = $(SRC:%.f90=%.o)
 COBJ = $(CSRC:%.c=%.o)
 CPPOBJ = $(CPPSRC:%.cpp=%.o)
 
+ifeq ($(GPU),1)
+FC = nvfortran
+FFLAGS = -O3 -Mfree -Mpreprocess -mp -cuda -gpu=cc80
+FFLAGS += -DUSE_CUDA
+CUDAOBJ = $(SRCDIR)/cuda_lbm.o
+else
+CUDAOBJ =
+endif
+
 #######OPTIONS settings###########
 OPT := -I$(SRCDIR) $(FFLAGS)
 LINKOPT := $(FFLAGS)
@@ -47,8 +62,8 @@ LINKOPT := $(FFLAGS)
 
 all: FSILBM3D
 
-FSILBM3D : $(OBJ) $(COBJ) #$(CPPOBJ)
-	$(FC) -o $@ $(LINKOPT) $(OBJDECOMP) $(OBJ) $(COBJ)
+FSILBM3D : $(OBJ) $(COBJ) $(CUDAOBJ) #$(CPPOBJ)
+	$(FC) -o $@ $(LINKOPT) $(OBJDECOMP) $(OBJ) $(COBJ) $(CUDAOBJ)
 #$(CPPOBJ)  -lstdc++
 
 
@@ -59,6 +74,16 @@ $(OBJ):$(SRCDIR)%.o : $(SRCDIR)%.f90
 $(COBJ):$(SRCDIR)%.o : $(SRCDIR)%.c
 	$(CC)  -c -O3 $<
 	mv $(@F) ${SRCDIR}
+
+$(CUDAOBJ): $(SRCDIR)/cuda_lbm.cuf $(SRCDIR)/ConstParams.o
+	$(FC) $(FFLAGS) -c $< -o $@
+
+ifeq ($(GPU),1)
+# these modules import cuda_lbm_backend, so the backend module must exist first
+$(SRCDIR)/Solidbody.o: $(CUDAOBJ)
+$(SRCDIR)/FluidDomain.o: $(CUDAOBJ)
+$(SRCDIR)/LBMBlockComm.o: $(CUDAOBJ)
+endif
 
 $(CPPOBJ):$(SRCDIR)%.o : $(SRCDIR)%.cpp
 	$(CPP)  -c -O3 $<
