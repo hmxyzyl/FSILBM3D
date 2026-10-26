@@ -10,10 +10,24 @@ BUILD ?=
 # including src/cuda_lbm.cuf. Use "make GPU=0" for the CPU-only version.
 GPU ?= 1
 
+# CPU/GPU comparison build: STRICT=1 disables FMA in host and device code.
+# The gfortran CPU build targets generic x86-64 and emits no FMA, while
+# nvfortran emits FMA at -O3 by default.  That arithmetic difference is
+# ~1e-16 per operation, but sensitive FSI cases amplify it (the Zhu plate
+# case separates at t~0.7 with FMA on and only much later with it off).
+# Use "make clean && make STRICT=1" when comparing against the CPU code.
+STRICT ?= 0
+GPUARCH = cc80
+FMAOPT =
+ifeq ($(STRICT),1)
+GPUARCH = cc80,nofma
+FMAOPT = -Mnofma
+endif
+
 #######CMP settings###########
 ifeq ($(CMP),nvfortran)
 FC = nvfortran
-FFLAGS = -O3 -Mfree -Mpreprocess -mp -cuda -gpu=cc80
+FFLAGS = -O3 -Mfree -Mpreprocess -mp -cuda -gpu=$(GPUARCH) $(FMAOPT)
 else ifeq ($(CMP),ifort)
 FC = ifort
 FFLAGS = -diag-disable=10448 -fpp -O3 -free -qopenmp -heap-arrays #-real-size 32 -double-size 64
@@ -45,7 +59,7 @@ CPPOBJ = $(CPPSRC:%.cpp=%.o)
 
 ifeq ($(GPU),1)
 FC = nvfortran
-FFLAGS = -O3 -Mfree -Mpreprocess -mp -cuda -gpu=cc80
+FFLAGS = -O3 -Mfree -Mpreprocess -mp -cuda -gpu=$(GPUARCH) $(FMAOPT)
 FFLAGS += -DUSE_CUDA
 CUDAOBJ = $(SRCDIR)/cuda_lbm.o
 else

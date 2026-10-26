@@ -60,17 +60,14 @@ GPU 侧支持的边界条件为 `0, 1, 101, 102, 103, 104, 201, 202, 203, 204, 3
 
    验证：模型 1 与 CPU 对照 100 步；模型 2/3/11/14/15 对照 25 步。`Group001_forces` 的 **Fx/Fy 差值均为 0**，Fz 仅 `~1e-12`。
 
-2. **IBM 收敛判据的检查频率**
-   CPU 每完成一轮罚力迭代就用主机端归约值判断 `dmaxLBM > m_dtolLBM`；
-   GPU 把 `dmaxLBM` 累加在设备标量上（`atomicAdd`），每 `IBM_CHECK_INTERVAL`（默认 4）轮才回传一次并判断，且 `nPass=min(4, ntolLBM-iterLBM)`。
-   当 `ntolLBM>4` 且收敛较快时，GPU 可能比 CPU 多跑 0–3 轮；总轮数仍被 `ntolLBM` 封顶。`ntolLBM=1` 时两者都只跑 1 轮，没有差别。
-
-3. **湍流统计的 `invStep` 精度**
+2. **湍流统计的 `invStep` 精度**
    CPU：`invStep = 1/real(step-step_s+1)`，按默认单精度计算后赋给 `real(8)`；
    GPU：`1.0d0/real(step-step_s+1,8)`，全程双精度。累计量在末几位会有差别（仅 `outputtype>=2` 使用）。
 
-4. **浮点累加顺序**
+3. **浮点累加顺序**
    IBM 罚力的「施加修正」kernel（`ibm_penalty_apply_kernel`）和力扩散 kernel（`ibm_spread_force_kernel`）对 `u`、`force` 使用双精度 `atomicAdd`，累加顺序不确定；CPU 是固定顺序的 OpenMP/顺序循环。**单元力的计算已经拆成独立的第一遍 kernel，所有单元都基于修正前的 `u`，与 CPU 的两遍语义一致**；剩余的原子加顺序只造成 `1e-16` 级舍入差，不再产生系统性偏差。异步上传和 IBM 串行化 event 只会改变 GPU 调度，不改变算法。
+
+> IBM 收敛判据已与 CPU 一致：GPU 现在每轮检查（`IBM_CHECK_INTERVAL=1`），不再每 4 轮才检查。Zhu 板算例（`ntolLBM=10`）验证：t≤1 的 `nodeAverage` 位移差由每 4 轮检查时的 ~3.5e-2 降到 ~2e-4；步长约 2.4–3.2 ms，代价可忽略。t≥2 后板振动的相位仍会因浮点/原子顺序的微小差异漂移，这是混沌敏感性问题，不是检查频率造成的系统性偏差。
 
 > 已确认**没有**算法差别、只是实现方式不同的部分：传播（in-place 换位 vs gather）、BCSymmetric（`mirror_x/y/z` 与 CPU 镜像一致）、宏观量（`SUM` vs 顺序累加）、父子块通信（设备端实现）、probe/flux/flow 输出打包、IBM 面积上传/单元力清零方式。
 
@@ -82,13 +79,39 @@ GPU 侧支持的边界条件为 `0, 1, 101, 102, 103, 104, 201, 202, 203, 204, 3
 | 体积力系数 | `update_volume_force_`，每个 block 计算一个标量值后再交给 GPU 叠加 |
 | IBM 预处理 | `UpdateElmtInterp`（4×4×4 插值索引/权重）、`UpdateElmt*` 中的虚拟体位置/速度/面积更新 |
 | 固体求解 | Newmark/FEM 求解器、节点载荷 `lodFlow` 计算、固体输出 |
-| 边界调度 | 判断每个面用哪种边界、`IBM_CHECK_INTERVAL` 收敛判断、虚拟体槽位管理 |
+| 边界调度 | 判断每个面用哪种边界、每轮 IBM 收敛判断、虚拟体槽位管理 |
 | 输出与后处理 | `write_flow_` 的文件写入、`write_fluid_flux` 的主机求和、探针文件、`ComputeFieldStat`、续算文件 |
 | 文件 I/O | 输入解析、结果文件写入 |
 
 这些部分沿用原有的 `!$OMP PARALLEL DO` 指令，由编译器打开 OpenMP（nvfortran 用 `-mp`，gfortran 用 `-fopenmp`）。
 
 > 注意：`set_boundary_conditions_`、`halfwayBCset_`、`interpolation_father_to_son`、`deliver_son_to_father` 中的主机循环在 CUDA 构建下不再执行（子程序开头直接走 GPU 分支返回），但保留给 CPU 构建使用。
+
+### 1.4 CPU/GPU 对拍时的编译选项（FMA）
+
+gfortran 的 CPU 构建默认面向通用 x86-64（`-O3`，未指定 `-march`），**不生成 FMA 指令**；nvfortran 的 GPU 构建在 `-O3` 下默认生成 FMA。实测默认 GPU 可执行文件含 1194 条 FMA，CPU 可执行文件为 0 条。两者每步会产生 ~1e-16 的舍入差；对敏感 FSI 算例，这个差会被迅速放大：
+
+- Zhu 板算例，`ntolLBM=10, dtolLBM=1e-12`（每步固定 10 轮罚力）：
+  - 只把 GPU 的 FMA 关掉、代码和参数完全不变，与默认 FMA 的 GPU 结果相比：t=0.75 的 |Δu|=0.117，t=1.0 为 0.419，t=1.5 为 0.232；
+  - CPU 与默认 GPU 的差为：t=0.75 0.117，t=1.0 0.410，t=1.5 0.190。两者量级相同，说明差异来自算术求值，而不是算法或移植错误。
+- 关掉 FMA 后（`make STRICT=1`），同一组参数下 CPU 与 GPU 的 |Δu| 降为：t=0.25 1.0e-7、t=0.5 1.3e-5、t=0.75 1.2e-4、t=1.0 1.4e-3、t=1.5 4.5e-3；t=0~4.4 的最大值为 1.4e-2（t=2.83），而 |u|≈1.5。逐步输出中第 10 步差 4e-14、第 64 步差 6.3e-9（默认 FMA 为 3.1e-7）。
+
+因此做 CPU/GPU 对拍时请使用：
+
+```
+make clean && make STRICT=1
+```
+
+`STRICT=1` 同时加 `-Mnofma`（主机代码）和 `-gpu=cc80,nofma`（设备代码），与 gfortran CPU 构建的算术保持一致。生产计算仍使用默认 FMA 构建即可；本算例中两者单步耗时接近（10 轮罚力时约 13 ms/步）。
+
+罚力迭代参数的选取建议：
+
+- `dtolLBM=0.01`（原设置）时残差紧贴阈值，迭代次数会在 1/2 之间翻转（实测第 224 步首次出现 CPU/GPU 迭代次数不同，到 t=0.5 有 519/3200 步不同），不适合作为对拍设置。
+- `dtolLBM=1e-12, ntolLBM=10` 时迭代次数恒为 10，计数确定；但罚力耦合更刚，对舍入差更敏感，分叉反而更早（t≈0.7）。
+- **纯代码对拍推荐 `ntolLBM=1`**：每步固定 1 轮，GPU 两次运行 t=0..7 逐位相同；配合 `STRICT=1` 时分叉最晚。
+- 物理生产不要用 `ntolLBM=1`（IBM 无滑移欠收敛）。生产可用 `ntolLBM=10, dtolLBM=1e-3~1e-4` 或其它"残差远离阈值"的设置，让迭代次数稳定。
+
+> 即使关掉 FMA，CPU/GPU 仍会因求和顺序、原子加顺序、主机/设备编译器差异保留 ~1e-16 的种子；该 FSI 算例在 t≈1.5–2 之后仍会逐渐分离。长时间验证应比较统计量（振动幅值、频率/相位、平均或均方根力、能量），而不是逐点曲线。
 
 ---
 
@@ -326,7 +349,7 @@ grid = ceil(zDim*yDim*xDim / BLOCK_SIZE)
 - `#ifdef USE_CUDA` 下 `use cudafor`，并把 `v_Ei/v_Ew/v_Ea/v_Evel/v_Eforce` 声明为 **pinned allocatable**；
 - `calculate_interaction_force` / `FSInteraction_force_`：GPU 分支接收 `cuda_state`，调用 `cuda_backend_ibm_setup` / `cuda_backend_ibm_prepare`；`v_Eforce` 的清零只在 CPU 路径执行（GPU 在设备上清零）；
 - `PenaltyForce_`：GPU 分支调用 `cuda_backend_ibm_penalty` 后直接返回；CPU 两遍循环保留；
-- `PenaltyForce_` 的罚力迭代：GPU 每 `IBM_CHECK_INTERVAL` 轮检查一次收敛，`nPass=min(4,ntolLBM-iterLBM)`；
+- `PenaltyForce_` 的罚力迭代：GPU 与 CPU 一样每轮检查一次收敛（`IBM_CHECK_INTERVAL=1`）；
 - `FluidVolumeForce_`：GPU 分支先调用 `cuda_backend_spread_ibm_force` 叠加 `force`，随后仍由主机循环计算梁载荷/力矩 `lodFlow`；
 - `UpdateElmtInterp_` 保持不变（仍由主机计算 4×4×4 索引/权重）。
 

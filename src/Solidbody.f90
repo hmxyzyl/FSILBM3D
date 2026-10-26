@@ -17,7 +17,7 @@ module SolidBody
 #ifdef USE_CUDA
     ! number of penalty iterations executed on the device between two
     ! host-side convergence checks
-    integer, parameter :: IBM_CHECK_INTERVAL = 4
+    integer, parameter :: IBM_CHECK_INTERVAL = 1
 #endif
     ! Immersed boundary method parameters
     public :: m_nFish,m_nGroup
@@ -954,9 +954,9 @@ module SolidBody
             iterLBM=0
             dmaxLBM=1d10
             do  while( iterLBM<m_ntolLBM .and. dmaxLBM>m_dtolLBM)
-                ! on the GPU several iterations run before the convergence
-                ! criterion is checked, so the CPU does not block after every
-                ! single kernel launch
+                ! one penalty iteration per convergence check, exactly like
+                ! the CPU version; the host only blocks on the small tolerance
+                ! transfer, not on the whole fluid solve
                 nPass=1
 #ifdef USE_CUDA
                 if(useGPU) nPass=min(IBM_CHECK_INTERVAL,m_ntolLBM-iterLBM)
