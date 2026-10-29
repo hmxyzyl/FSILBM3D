@@ -1250,10 +1250,6 @@ contains
         case(11,14,15)
             call collision_les_kernel<<<grid,threads,0,state%compute_stream>>>(state%f,state%rho,state%u,state%force, &
                  state%tau_all,model,omega,dh,tau_b,nu_v,state%zdim,state%ydim,state%xdim)
-        case(12)
-            write(*,'(A)') 'CUDA model 12 (regularised BGK) is not available:'
-            write(*,'(A)') 'the CPU implementation is incomplete (scalar f_1, uninitialised omega) and diverges to NaN.'
-            stop
         case default
             write(*,'(A,I0)') 'CUDA collision model not supported: ',model
             stop

@@ -1333,6 +1333,7 @@ module FluidDomain
         real(8):: uSqr,uxyz(0:lbmDim),fEq(0:lbmDim),Flb(0:lbmDim),dt3,omega,f_1
         integer:: x,y,z
 #ifdef USE_CUDA
+        if (this%iCollidModel .eq. 12) stop 'CUDA does not implement regularised BGK (12)'
         if (this%iCollidModel .eq. 13) stop 'CUDA does not implement ELBM (13)'
         call cuda_backend_collision(this%cuda,this%iCollidModel,this%Omega,this%Omega2,this%dh,this%tau,flow%nu)
         return

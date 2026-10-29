@@ -54,8 +54,8 @@ GPU 侧支持的边界条件为 `0, 1, 101, 102, 103, 104, 201, 202, 203, 204, 3
    - 3：`collision_mrt_kernel`，两个 19×19 的 `M_COLLID/M_FORCE` 矩阵由主机 `calculate_MRT_params` 计算后、每个 block 上传一次（`cuda_backend_set_mrt`），kernel 内做 19 项点积；
    - 11：`collision_les_kernel`，Smagorinsky 只用本点非平衡量，无需邻域；
    - 14/15：`collision_les_kernel`，WALE/Vreman 读取 `u` 的一阶差分；为与 CPU 逐位一致，保留了 CPU 的 `invdh=dh` 写法（不是 `1/dh`）和边界单侧差分规则；
-   - 12：**不支持**。CPU 的 RBGK 只返回一个标量 `f_1` 并加到全部 19 个分量，且 Flb 项使用的 `omega` 在 model 12 分支中未初始化；CPU 自身在几步后即发散到 NaN（实测第 22–23 步 `Nan found in PenaltyForce`）。GPU 入口显式 `stop` 并给出说明；
-   - 13：ELBM 未移植（实现复杂），GPU 入口显式 `stop`。
+   - 12：RBGK **未移植到 GPU**。CUDA 构建在 `FluidDomain` 的 `collision_` 中、调用 GPU 后端之前显式 `stop`，提示该模型不支持；
+   - 13：ELBM **未移植到 GPU**，与模型 12 一样，在调用 GPU 后端之前显式 `stop`，提示该模型不支持。
    未支持的模型不会再有“静默跳过碰撞”的行为。
 
    验证：模型 1 与 CPU 对照 100 步；模型 2/3/11/14/15 对照 25 步。`Group001_forces` 的 **Fx/Fy 差值均为 0**，Fz 仅 `~1e-12`。
@@ -294,7 +294,7 @@ grid = ceil(zDim*yDim*xDim / BLOCK_SIZE)
 | 生命周期 | `cuda_backend_init`、`cuda_backend_finalize`、`cuda_backend_device_info` |
 | 宏观量 | `cuda_backend_macro`、`cuda_backend_macro_batch`、`cuda_backend_macro_if_needed`、`cuda_backend_download_macro` |
 | 流体步 | `cuda_backend_collision`、`cuda_backend_stream`、`cuda_backend_boundary`、`cuda_backend_halfway`、`cuda_backend_moving_halfway`、`cuda_backend_reset_force`、`cuda_backend_add_uniform_force` |
-| 碰撞模型 | `cuda_backend_set_mrt`（上传 MRT 矩阵）；`cuda_backend_collision` 按 model 分派 1/2/3/11/14/15，12/13/未知模型 `stop` |
+| 碰撞模型 | `cuda_backend_set_mrt`（上传 MRT 矩阵）；`cuda_backend_collision` 按 model 分派 1/2/3/11/14/15，其他模型由通用检查 `stop`；12/13 已在 `FluidDomain` 的 `collision_` 中提前拦截 |
 | IBM | `cuda_backend_ibm_setup`、`cuda_backend_ibm_prepare`、`cuda_backend_ibm_penalty`、`cuda_backend_ibm_tolerance`、`cuda_backend_ibm_download_force`、`cuda_backend_spread_ibm_force`、`cuda_backend_ibm_clear` |
 | 父子块 | `cuda_backend_extract_face`、`cuda_backend_average_face`、`cuda_backend_interpolate_face`、`cuda_backend_deliver_face`、`cuda_backend_record_event`、`cuda_backend_wait_event` |
 | 诊断/输出 | `cuda_backend_download_flux_planes`、`cuda_backend_download_probes`、`cuda_backend_pack_flow_output`、`cuda_backend_turbulent_statistic` |
