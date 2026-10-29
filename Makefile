@@ -10,12 +10,21 @@ BUILD ?=
 # including src/cuda_lbm.cuf. Use "make GPU=0" for the CPU-only version.
 GPU ?= 1
 
-# CPU/GPU comparison build: STRICT=1 disables FMA in host and device code.
-# The gfortran CPU build targets generic x86-64 and emits no FMA, while
-# nvfortran emits FMA at -O3 by default.  That arithmetic difference is
-# ~1e-16 per operation, but sensitive FSI cases amplify it (the Zhu plate
-# case separates at t~0.7 with FMA on and only much later with it off).
-# Use "make clean && make STRICT=1" when comparing against the CPU code.
+# STRICT controls FMA in nvfortran builds; it is not a solver tolerance.
+# CPU baseline: make clean && make GPU=0 (compiler selected by CMP).
+# STRICT=0 and STRICT=1 give identical flags for gfortran/ifort/ifx.
+# The gfortran path uses generic x86-64 flags that do not enable FMA;
+# this does not describe ifort/ifx, whose FMA behavior depends on their flags.
+# Match the master's compiler, flags, inputs and thread count for CPU regressions.
+# GPU comparison build: make clean && make GPU=1 STRICT=1
+# This adds -Mnofma for nvfortran host code and nofma for device code.
+# Defaults are GPU=1 and STRICT=0, so plain "make" builds the GPU version
+# with FMA allowed (unless overridden on the command line or in the environment).
+# For a clean default GPU build: make clean && make
+# Explicit equivalent: make clean && make GPU=1 STRICT=0
+# FMA changes rounding and can affect sensitive FSI results; disabling it
+# reduces one source of CPU/GPU differences, but does not ensure bitwise equality.
+# STRICT also affects GPU=0 CMP=nvfortran; it does not change gfortran/ifort/ifx flags.
 STRICT ?= 0
 GPUARCH = cc80
 FMAOPT =

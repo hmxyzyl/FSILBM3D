@@ -10,7 +10,7 @@
 
 - 求解核心（碰撞、传播、宏观量、边界、IBM、父子块通信）全部在 GPU 上；
 - IBM 罚力使用「先算力、再修正」的两遍 kernel，与 CPU 的 `PenaltyForce_` 语义一致；
-- 宏观量按需计算（lazy macro），不再每个时间步无条件计算/下载；
+- GPU 宏观量按需计算（lazy macro），避免步末无条件计算及不必要的下载；CPU 路径保留每步结束后的统一宏观量更新；
 - IBM 元素数组使用 pinned 主机内存 + 独立 upload stream 异步上传；
 - flux、探针、流场输出均在 GPU 上打包，只回传实际需要的数据。
 
@@ -94,15 +94,20 @@ gfortran 的 CPU 构建默认面向通用 x86-64（`-O3`，未指定 `-march`）
 - Zhu 板算例，`ntolLBM=10, dtolLBM=1e-12`（每步固定 10 轮罚力）：
   - 只把 GPU 的 FMA 关掉、代码和参数完全不变，与默认 FMA 的 GPU 结果相比：t=0.75 的 |Δu|=0.117，t=1.0 为 0.419，t=1.5 为 0.232；
   - CPU 与默认 GPU 的差为：t=0.75 0.117，t=1.0 0.410，t=1.5 0.190。两者量级相同，说明差异来自算术求值，而不是算法或移植错误。
-- 关掉 FMA 后（`make STRICT=1`），同一组参数下 CPU 与 GPU 的 |Δu| 降为：t=0.25 1.0e-7、t=0.5 1.3e-5、t=0.75 1.2e-4、t=1.0 1.4e-3、t=1.5 4.5e-3；t=0~4.4 的最大值为 1.4e-2（t=2.83），而 |u|≈1.5。逐步输出中第 10 步差 4e-14、第 64 步差 6.3e-9（默认 FMA 为 3.1e-7）。
+- 关掉 FMA 后（`make GPU=1 STRICT=1`），同一组参数下 CPU 与 GPU 的 |Δu| 降为：t=0.25 1.0e-7、t=0.5 1.3e-5、t=0.75 1.2e-4、t=1.0 1.4e-3、t=1.5 4.5e-3；t=0~4.4 的最大值为 1.4e-2（t=2.83），而 |u|≈1.5。逐步输出中第 10 步差 4e-14、第 64 步差 6.3e-9（默认 FMA 为 3.1e-7）。
 
-因此做 CPU/GPU 对拍时请使用：
+CPU/GPU 对拍时，应明确区分两种构建，并在切换前清理旧编译产物：
 
+```bash
+# CPU 基线：CMP 应与 master 的对照构建一致，CPU 回归不要求 STRICT=1
+make clean && make GPU=0 CMP=gfortran
+# 保存 CPU 可执行文件或完成 CPU 测试后，再构建 GPU 对照版本
+make clean && make GPU=1 STRICT=1
 ```
-make clean && make STRICT=1
-```
 
-`STRICT=1` 同时加 `-Mnofma`（主机代码）和 `-gpu=cc80,nofma`（设备代码），与 gfortran CPU 构建的算术保持一致。生产计算仍使用默认 FMA 构建即可；本算例中两者单步耗时接近（10 轮罚力时约 13 ms/步）。
+当前 Makefile 的 `CMP` 可以选择 CPU 编译器；上面显式选择 `gfortran` 是为了对应本节的 gfortran 基线。使用 ifort/ifx 对照时，新旧 CPU 版本也应使用相同编译器和参数，不能把 gfortran 的 FMA 行为直接套用到 ifort/ifx。
+
+`STRICT=1` 在 nvfortran 构建中同时加 `-Mnofma`（主机代码）和 `-gpu=cc80,nofma`（设备代码），用于减少与 gfortran CPU 基线之间的 FMA 舍入差异，不保证逐位一致。对于 `GPU=0` 的 gfortran/ifort/ifx 路径，`STRICT=0/1` 不改变编译参数，因此无需添加 `STRICT=1`；若显式使用 `GPU=0 CMP=nvfortran`，该开关仍会影响其编译参数。生产计算仍使用默认 FMA 构建即可；本算例中两者单步耗时接近（10 轮罚力时约 13 ms/步）。
 
 罚力迭代参数的选取建议：
 
@@ -356,7 +361,8 @@ grid = ceil(zDim*yDim*xDim / BLOCK_SIZE)
 ### 4.4 `main.f90`
 
 - 初始化的 `calculate_macro_quantities_blocks()` 保留；
-- 时间步内不再每步无条件调用 `calculate_macro_quantities_blocks()`（lazy macro），由输出/探针/通量/统计的消费者调用 `ensure_macro_blocks`；
+- CPU 路径（`#ifndef USE_CUDA`）在每步流场推进后、湍流统计前调用 `calculate_macro_quantities_blocks()`，保证统计和输出读取当前时刻的密度、速度；
+- GPU 路径省略步末统一更新，流场输出等消费者通过 `ensure_macro_blocks` 或直接调用 `cuda_backend_macro_if_needed` 按需更新；需要主机数据时再下载；
 - info 分支：GPU 路径调用 `write_fluid_probe_gpu`，CPU 路径仍调用 `calculate_macro_quantities_iblock` + `write_fluid_information`。
 
 ### 4.5 `Makefile`

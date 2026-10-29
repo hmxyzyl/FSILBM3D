@@ -104,8 +104,11 @@ PROGRAM main
         time_IBM       = 0.d0
         time_FEM       = 0.d0
         call tree_collision_streaming_IBM_FEM(blockTreeRoot,time_collision,time_streaming,time_IBM,time_FEM)
-        ! macroscopic fields are computed lazily by the consumers below; the
-        ! next IBM call recomputes them with the updated volume force
+#ifndef USE_CUDA
+        ! CPU consumers read den/uuu directly, so refresh them after advancing fIn.
+        call calculate_macro_quantities_blocks()
+#endif
+        ! The CUDA path computes macroscopic fields on demand.
         call calculate_turbulent_statistic_blocks(step,start_ave)
         write(*,*)'Time for collision step:', time_collision
         write(*,*)'Time for streaming step:', time_streaming
