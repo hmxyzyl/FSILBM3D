@@ -377,14 +377,14 @@ module LBMBlockComm
         integer:: i,f,s,ns,xDimF,yDimF,zDimF,e
         f  = treenode
         ns = blockTree(f)%nsons
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         ! the whole exchange stays on the device, see
         ! extract_interpolate_layer_gpu
         if(ns.gt.0) then
             call extract_interpolate_layer_gpu(f,time)
             return
         endif
-    #endif
+#endif
         do i = 1,ns
             s = blockTree(f)%sons(i)
             pair  = blockTree(f)%comm(i)
@@ -628,11 +628,11 @@ module LBMBlockComm
         type(CommPair),intent(in):: pair
         integer:: xS,yS,zS,xF,yF,zF
         real(8)::tmpf(0:lbmDim),coeff,VF(1:3),dh
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         ! fine-to-coarse step entirely on the device
         call deliver_son_to_father_gpu(pair)
         return
-    #endif
+#endif
         VF    = LBMblks(pair%sonId)%volumeForce(1:3)
         dh    = LBMblks(pair%sonId)%dh
         ! x direction slices
@@ -771,10 +771,10 @@ module LBMBlockComm
         integer:: xDimS, xDimF, yDimS, yDimF, zDimS, zDimF
         real(8),allocatable::tmpf(:,:,:)
         real(8),allocatable::tmptau(:,:)
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         call interpolation_father_to_son_gpu(pair,n_timeStep,flow%interpolateScheme)
         return
-    #endif
+#endif
         VF    = LBMblks(pair%fatherId)%volumeForce(1:3)
         dh    = LBMblks(pair%fatherId)%dh
         xDimS = pair%xDimS

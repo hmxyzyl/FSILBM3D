@@ -18,7 +18,10 @@ module FluidDomain
     public:: read_fuild_blocks,allocate_fuild_memory_blocks,calculate_macro_quantities_blocks,calculate_turbulent_statistic_blocks,calculate_macro_quantities_iblock,initialise_fuild_blocks, &
              check_is_continue,add_volume_force_blocks,update_volume_force_blocks,write_flow_blocks,set_boundary_conditions_block,collision_block, &
              write_continue_blocks,streaming_block,computeFieldStat_blocks,clear_volume_force, &
-             CompareBlocks,FindCarrierFluidBlock,halfwayBCset_block,write_fluid_flux,write_fluid_probe_gpu,ensure_macro_blocks
+             CompareBlocks,FindCarrierFluidBlock,halfwayBCset_block,write_fluid_flux,ensure_macro_blocks
+#ifdef USE_CUDA
+    public :: write_fluid_probe_gpu
+#endif
     integer:: m_nblocks, m_npsize
     type :: LBMBlock
         integer :: ID,iCollidModel,offsetOutput,outputtype
@@ -42,9 +45,9 @@ module FluidDomain
         real(8) :: offsetMoveGrid(1:3),volumeForce(3)
         real(8) :: blktime
         integer, allocatable :: carriedBodies(:) ! 0 is the number of carried bodies
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         type(cuda_lbm_state) :: cuda
-    #endif
+#endif
     contains
         procedure :: allocate_fluid => allocate_fluid_
         procedure :: Initialise => Initialise_
@@ -268,9 +271,9 @@ module FluidDomain
         integer,intent(in):: npsize
         integer:: iblock
         m_npsize = npsize
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         call cuda_backend_device_info()
-    #endif
+#endif
         do iblock = 1,m_nblocks
             call LBMblks(iblock)%allocate_fluid()
         enddo
@@ -373,8 +376,8 @@ module FluidDomain
         do iblock = 1,m_nblocks
             call LBMblks(iblock)%calculate_macro_quantities()
         enddo
-    contains
 #ifdef USE_CUDA
+    contains
         subroutine macro_batch()
             ! single-state calls also mark each state's macro fields valid
             do iblock=1,m_nblocks
@@ -522,10 +525,10 @@ module FluidDomain
         ! initialize flow information
         this%blktime = time
         call initialise_flow()
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         call cuda_backend_init(this%cuda,this%zDim,this%yDim,this%xDim,this%fIn,this%den,this%uuu,this%force,this%tau_all)
         if(this%iCollidModel.eq.3) call cuda_backend_set_mrt(this%cuda,this%M_COLLID,this%M_FORCE)
-    #endif
+#endif
 
         contains
 
@@ -707,7 +710,7 @@ module FluidDomain
         integer:: x, y, z
         real(8):: xCoord,yCoord,zCoord,velocity(1:SpaceDim)
         real(8):: fEq(0:lbmDim),fEqi(0:lbmDim),fTmp(0:lbmDim)
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         if(cuda_boundary_supported(this%BndConds)) then
             call cuda_backend_boundary(this%cuda,this%BndConds,flow%denIn,flow%uvwIn,flow%shearRateIn,flow%velocityKind,this%blktime,this%xmin,this%ymin,this%zmin,this%dh)
             do z=1,6
@@ -715,7 +718,7 @@ module FluidDomain
             enddo
             return
         endif
-    #endif
+#endif
         ! set the x direction (inlet) --------------------------------------------------------------------
         if (this%BndConds(1) .eq. BCEq_DirecletU) then
             ! equilibriun scheme
@@ -1226,14 +1229,14 @@ module FluidDomain
         implicit none
         class(LBMBlock), intent(inout) :: this
         integer::x,y,z
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         call cuda_backend_macro(this%cuda,this%volumeForce(1),this%volumeForce(2),this%volumeForce(3),this%dh)
         ! same policy as the batched version: the macroscopic fields are only
         ! copied back when the GPU cannot handle the boundary conditions
         if(cuda_boundary_supported(this%BndConds)) return
         call cuda_backend_download_macro(this%cuda,this%den,this%uuu)
         return
-    #endif
+#endif
         !$OMP PARALLEL DO SCHEDULE(STATIC) PRIVATE(x,y,z)
         do  x = 1, this%xDim
         do  y = 1, this%yDim
@@ -1294,10 +1297,10 @@ module FluidDomain
         implicit none
         class(LBMBlock), intent(inout) :: this
         integer:: x
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         call cuda_backend_add_uniform_force(this%cuda,this%volumeForce(1),this%volumeForce(2),this%volumeForce(3))
         return
-    #endif
+#endif
         !$OMP PARALLEL DO SCHEDULE(STATIC) PRIVATE(x)
         do x=1,this%xDim
             this%force(:,:,x,1) = this%force(:,:,x,1) + this%volumeForce(1)
@@ -1311,10 +1314,10 @@ module FluidDomain
         implicit none
         class(LBMBlock), intent(inout) :: this
         integer:: x
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         call cuda_backend_reset_force(this%cuda)
         return
-    #endif
+#endif
         !$OMP PARALLEL DO SCHEDULE(STATIC) PRIVATE(x)
         do x=1,this%xDim
             this%force(:,:,x,1) = 0.d0
@@ -1329,11 +1332,11 @@ module FluidDomain
         class(LBMBlock), intent(inout) :: this
         real(8):: uSqr,uxyz(0:lbmDim),fEq(0:lbmDim),Flb(0:lbmDim),dt3,omega,f_1
         integer:: x,y,z
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         if (this%iCollidModel .eq. 13) stop 'CUDA does not implement ELBM (13)'
         call cuda_backend_collision(this%cuda,this%iCollidModel,this%Omega,this%Omega2,this%dh,this%tau,flow%nu)
         return
-    #endif
+#endif
         dt3 = 3.d0*this%dh
         !$OMP PARALLEL DO SCHEDULE(STATIC) PRIVATE(x,y,z,uSqr,uxyz,fEq,Flb,omega)
         do    x = 1, this%xDim
@@ -1639,10 +1642,10 @@ module FluidDomain
         implicit none
         class(LBMBlock), intent(inout) :: this
         integer:: i
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         call cuda_backend_stream(this%cuda)
         return
-    #endif
+#endif
         do  i=0,lbmDim
             call swapzy(this%fIn, ee(i,3), ee(i,2), i, this%zDim, this%yDim, this%xDim, lbmDim)
             call swapx(this%fIn, ee(i,1), i, this%zDim, this%yDim, this%xDim, lbmDim, this%OMPparindex, this%OMPeid, this%OMPedge)
@@ -1766,12 +1769,12 @@ module FluidDomain
         real(8):: invUref,invUrefs
         real(4), allocatable :: flowout(:,:,:,:)
         if(this%outputtype .lt. 1) return
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         if(this%outputtype .ne. 1) then
             call cuda_backend_download_macro(this%cuda,this%den,this%uuu)
             if(this%outputtype .ge. 2) call cuda_backend_turbulent_statistic(this%cuda,this%uuu_ave,0,0,.true.,.false.)
         endif
-    #endif
+#endif
         nxs  = 1 + this%offsetOutput
         nys  = 1 + this%offsetOutput
         nzs  = 1 + this%offsetOutput

@@ -622,19 +622,19 @@ module SolidBody
         integer,intent(in):: xDim,yDim,zDim
         real(8),intent(inout)::uuu(zDim,yDim,xDim,1:3)
         real(8),intent(inout)::force(zDim,yDim,xDim,1:3)
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         type(cuda_lbm_state), intent(inout), optional :: cuda_state
-    #endif
+#endif
         integer :: i,iFish
         do i = 1,bodies(0)
             iFish = bodies(i)
             call VBodies(iFish)%UpdatePosVelArea()
         enddo
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         call calculate_interaction_force(bodies,dt,dh,xmin,ymin,zmin,xDim,yDim,zDim,uuu,force,cuda_state)
-    #else
+#else
         call calculate_interaction_force(bodies,dt,dh,xmin,ymin,zmin,xDim,yDim,zDim,uuu,force)
-    #endif
+#endif
     end subroutine
 
     subroutine PlateUpdatePosVelArea_(this)
@@ -914,9 +914,9 @@ module SolidBody
         integer,intent(in):: xDim,yDim,zDim
         real(8),intent(inout)::uuu(zDim,yDim,xDim,1:3)
         real(8),intent(inout)::force(zDim,yDim,xDim,1:3)
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         type(cuda_lbm_state), intent(inout), optional :: cuda_state
-    #endif
+#endif
         !================================
         integer:: iFish, i, iPass
         integer:: iterLBM, nPass
@@ -1040,9 +1040,9 @@ module SolidBody
         real(8),intent(in):: dh
         integer,intent(in):: xDim,yDim,zDim,slot
         real(8),intent(inout)::force(zDim,yDim,xDim,1:3)
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         type(cuda_lbm_state), intent(inout), optional :: cuda_state
-    #endif
+#endif
         !==================================================================================================
         integer:: ix(-1:2),jy(-1:2),kz(-1:2)
         real(8):: rx(-1:2),ry(-1:2),rz(-1:2),forcetemp(1:3)
@@ -1055,14 +1055,14 @@ module SolidBody
         !==================================================================================================
         invh3 = (1.d0/dh)**3
         gpu_force=.false.
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         if(present(cuda_state)) then
             ! the interpolation geometry and the accumulated element force are
             ! already resident on the device
             call cuda_backend_spread_ibm_force(cuda_state,slot,dh)
             gpu_force=.true.
         endif
-    #endif
+#endif
         ! compute the velocity of IB nodes at element center
         do  iEL=1,this%v_nelmts
             ix = this%v_Ei(1:4,iEL)
@@ -1119,9 +1119,9 @@ module SolidBody
         integer,intent(in):: xDim,yDim,zDim,slot
         real(8),intent(inout)::uuu(zDim,yDim,xDim,1:3)
         class(VirtualBody), intent(inout) :: this
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         type(cuda_lbm_state), intent(inout), optional :: cuda_state
-    #endif
+#endif
         real(8),intent(out)::tolerance, ntolsum
         !======================================================
         integer:: ix(-1:2),jy(-1:2),kz(-1:2)
@@ -1133,7 +1133,7 @@ module SolidBody
         invh3 = 0.5d0*dt*(1.d0/dh)**3/m_denIn
         tolerance = 0.d0
         ntolsum = dble(this%v_nelmts)
-    #ifdef USE_CUDA
+#ifdef USE_CUDA
         if(present(cuda_state)) then
             ! one penalty iteration on the device: the element force stays in
             ! device memory and the tolerance is accumulated by the kernel, so
@@ -1143,7 +1143,7 @@ module SolidBody
             ntolsum = 0.d0
             return
         endif
-    #endif
+#endif
         ! compute the velocity of IB nodes at element center
         !$OMP PARALLEL DO SCHEDULE(STATIC) PRIVATE(iEL,x,y,z,rx,ry,rz,ix,jy,kz,velElemIB,forceTemp) reduction(+:tolerance)
         do  iEL=1,this%v_nelmts
