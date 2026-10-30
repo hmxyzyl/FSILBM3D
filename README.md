@@ -152,7 +152,7 @@ $PBS_WDIR/$PBS_ENAME
 
 - **Parallel**
 
-  1. *npsize* : The core number used in the simulaion.The CUDA version also need OpenMP thraed.The optimal CPU core count depende on the fliud meshes (usually set at 4/2/8). 
+  1. *npsize* : The core number used in the simulaion.The CUDA version also need OpenMP thread.The optimal CPU core count depende on the fluid meshes (usually set at 4/2/8). 
 
 
 - **FlowCondition**
