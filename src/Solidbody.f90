@@ -995,7 +995,7 @@ module SolidBody
                 if(dsum.gt.0.0d0 .and. m_Uref.ne.0.0d0) then
                     dmaxLBM=dmaxLBM/(dsum * m_Uref)
                 else
-                    dmaxLBM=0.0d0
+                    stop 'Invalid IBM residual denominator: dsum must be positive and m_Uref nonzero'
                 endif
                 iterLBM=iterLBM+nPass
             enddo

@@ -288,7 +288,7 @@ module LBMBlockComm
         ! calculate macro quantities for each blocks,must be ahead of collision(Huang Haibo 2024 P162)
         call LBMblks(treenode)%calculate_macro_quantities()
         call LBMblks(treenode)%ResetVolumeForce()
-        call IBM_FEM(treenode,time_IBM,time_FEM,LBMblks(treenode)%blktime,.false.)
+        call IBM(treenode,time_IBM)
         call LBMblks(treenode)%add_volume_force()
         ! extract interpolation layer for old time
         call extract_interpolate_layer(treenode,1)
@@ -303,7 +303,7 @@ module LBMBlockComm
         call streaming_block(treenode)
         call get_now_time(time_end2)
         time_streaming = time_streaming + (time_end2 - time_begine2)
-        call FEM_solve(treenode,LBMblks(treenode)%blktime,time_FEM)
+        call FEM(treenode,time_FEM,LBMblks(treenode)%blktime)
         !set boundary
         call set_boundary_conditions_block(treenode)
         ! extract interpolation layer for new time
@@ -322,15 +322,13 @@ module LBMBlockComm
         endif
     endsubroutine tree_collision_streaming_IBM_FEM
 
-    subroutine IBM_FEM(carrierFluidId,time_IBM,time_FEM,time,solve_fem)
-        use SolidBody, only: Solver,FSInteraction_force
-        use FlowCondition, only: flow
+    subroutine IBM(carrierFluidId,time_IBM)
+        use SolidBody, only: FSInteraction_force
         implicit none
-        real(8):: time,dt_solid,time_IBM,time_FEM,time_begine2,time_end2
-        integer:: carrierFluidId,isubstep
-        logical, intent(in), optional :: solve_fem
-        dt_solid = LBMblks(carrierFluidId)%dh/dble(flow%numsubstep)       !time step of the solid
-        call get_now_time(time_begine2)
+        integer, intent(in) :: carrierFluidId
+        real(8), intent(inout) :: time_IBM
+        real(8) :: time_begin,time_end
+        call get_now_time(time_begin)
 #ifdef USE_CUDA
         call FSInteraction_force(LBMblks(carrierFluidId)%carriedBodies,LBMblks(carrierFluidId)%dh,LBMblks(carrierFluidId)%dh,LBMblks(carrierFluidId)%xmin,LBMblks(carrierFluidId)%ymin,LBMblks(carrierFluidId)%zmin, &
                                 LBMblks(carrierFluidId)%xDim,LBMblks(carrierFluidId)%yDim,LBMblks(carrierFluidId)%zDim,LBMblks(carrierFluidId)%uuu,LBMblks(carrierFluidId)%force, &
@@ -339,19 +337,11 @@ module LBMBlockComm
         call FSInteraction_force(LBMblks(carrierFluidId)%carriedBodies,LBMblks(carrierFluidId)%dh,LBMblks(carrierFluidId)%dh,LBMblks(carrierFluidId)%xmin,LBMblks(carrierFluidId)%ymin,LBMblks(carrierFluidId)%zmin, &
                                 LBMblks(carrierFluidId)%xDim,LBMblks(carrierFluidId)%yDim,LBMblks(carrierFluidId)%zDim,LBMblks(carrierFluidId)%uuu,LBMblks(carrierFluidId)%force)
 #endif
-        call get_now_time(time_end2)
-        time_IBM = time_IBM + (time_end2 - time_begine2)
-        if(.not.present(solve_fem) .or. solve_fem) then
-            call get_now_time(time_begine2)
-            do isubstep=1,flow%numsubstep
-                call Solver(LBMblks(carrierFluidId)%carriedBodies,time,isubstep,LBMblks(carrierFluidId)%dh,dt_solid)
-            enddo !do isubstep=1,numsubstep
-            call get_now_time(time_end2)
-            time_FEM = time_FEM + (time_end2 - time_begine2)
-        endif
-    endsubroutine
+        call get_now_time(time_end)
+        time_IBM = time_IBM + (time_end - time_begin)
+    end subroutine IBM
 
-    subroutine FEM_solve(carrierFluidId,time,time_FEM)
+    subroutine FEM(carrierFluidId,time_FEM,time)
         use SolidBody, only: Solver
         use FlowCondition, only: flow
         implicit none
@@ -360,14 +350,14 @@ module LBMBlockComm
         real(8), intent(inout) :: time_FEM
         integer :: isubstep
         real(8) :: dt_solid,time_begin,time_end
-        dt_solid=LBMblks(carrierFluidId)%dh/dble(flow%numsubstep)
+        dt_solid = LBMblks(carrierFluidId)%dh/dble(flow%numsubstep)       !time step of the solid
         call get_now_time(time_begin)
         do isubstep=1,flow%numsubstep
             call Solver(LBMblks(carrierFluidId)%carriedBodies,time,isubstep,LBMblks(carrierFluidId)%dh,dt_solid)
         enddo
         call get_now_time(time_end)
-        time_FEM=time_FEM+(time_end-time_begin)
-    end subroutine FEM_solve
+        time_FEM = time_FEM + (time_end - time_begin)
+    end subroutine FEM
 
     subroutine extract_interpolate_layer(treenode,time) ! time interpolation : linear
         implicit none

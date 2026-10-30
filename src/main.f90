@@ -140,7 +140,6 @@ PROGRAM main
                 ! only the probe stencil leaves the device
                 call write_fluid_probe_gpu(flow%inWhichBlock,time)
 #else
-                call calculate_macro_quantities_iblock(flow%inWhichBlock)
                 call write_fluid_information(time,LBMblks(flow%inWhichBlock)%dh,LBMblks(flow%inWhichBlock)%xmin,LBMblks(flow%inWhichBlock)%ymin,LBMblks(flow%inWhichBlock)%zmin, &
                                                   LBMblks(flow%inWhichBlock)%xDim,LBMblks(flow%inWhichBlock)%yDim,LBMblks(flow%inWhichBlock)%zDim,LBMblks(flow%inWhichBlock)%uuu)
 #endif

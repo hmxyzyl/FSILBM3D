@@ -342,12 +342,17 @@ grid = ceil(zDim*yDim*xDim / BLOCK_SIZE)
 
 ### 4.2 `LBMBlockComm.f90`
 
+- 原 CPU 版本的 `IBM_FEM` 将流固相互作用力计算和固体求解放在同一子程序内；当前拆为 `IBM` 和 `FEM`，CPU 与 GPU 构建共用这一调度结构：
+  - `IBM(carrierFluidId,time_IBM)`：调用 `FSInteraction_force`，完成罚力迭代、固体节点载荷与流体受力更新，并累计 IBM 耗时。CPU 分支使用主机数组；GPU 分支额外传入该流体块的 `cuda` 状态，使用设备端 IBM 后端；
+  - `FEM(carrierFluidId,time_FEM,time)`：仍在 CPU 上执行固体求解。每次调用按 `flow%numsubstep` 推进固体子步，子步长为 `dh/numsubstep`，并累计 FEM 耗时；
+- `tree_collision_streaming_IBM_FEM` 对每个块的调用顺序为：更新体积力参数 → 计算宏观量 → 清零流体受力 → `IBM` → 添加体积力 → 提取旧时刻通信层 → 碰撞 → 缓存半程反弹数据 → 传播 → `FEM` → 设置边界 → 提取新时刻通信层，然后递归推进子块并交换父子块数据。
+- 相比 CPU 版本，FEM 从碰撞前移至传播后，CPU 路径也采用这个顺序。IBM 完成后，固体求解使用已得到的载荷，流体碰撞、传播使用当前流场和受力，不依赖此次 FEM 更新后的固体位置；因此当前依赖关系允许调整它们的先后顺序。CPU 顺序执行；GPU 路径先提交设备上的碰撞、传播任务，再由 CPU 求解固体，为两者重叠执行提供机会，实际重叠仍受同步依赖约束。
 - `use cuda_lbm_backend`：引入父子块通信接口；
 - `extract_interpolate_layer`：`#ifdef USE_CUDA` 下走 `extract_interpolate_layer_gpu`，父块采样/平均/写入子块面缓冲全部在设备上；
 - 新增 `extract_interpolate_layer_gpu`：按子块面调用 `cuda_backend_extract_face` / `cuda_backend_average_face`；
 - `interpolation_father_to_son`：GPU 分支走 `interpolation_father_to_son_gpu`（`cuda_backend_interpolate_face`）；
 - `deliver_son_to_father`：GPU 分支走 `deliver_son_to_father_gpu`（`cuda_backend_record_event` + `cuda_backend_deliver_face`）；
-- 树结构、时间步循环、subcycling 逻辑不变。
+- 块树结构、父子块递归顺序及细网格 subcycling 次数不变；块内 IBM/FEM 的拆分与调度调整如上所述。
 
 ### 4.3 `Solidbody.f90`
 
@@ -363,7 +368,7 @@ grid = ceil(zDim*yDim*xDim / BLOCK_SIZE)
 - 初始化的 `calculate_macro_quantities_blocks()` 保留；
 - CPU 路径（`#ifndef USE_CUDA`）在每步流场推进后、湍流统计前调用 `calculate_macro_quantities_blocks()`，保证统计和输出读取当前时刻的密度、速度；
 - GPU 路径省略步末统一更新，流场输出等消费者通过 `ensure_macro_blocks` 或直接调用 `cuda_backend_macro_if_needed` 按需更新；需要主机数据时再下载；
-- info 分支：GPU 路径调用 `write_fluid_probe_gpu`，CPU 路径仍调用 `calculate_macro_quantities_iblock` + `write_fluid_information`。
+- info 分支：GPU 路径调用 `write_fluid_probe_gpu`；CPU 路径调用 `write_fluid_information`，使用步末统一更新后的速度场，不再重复调用 `calculate_macro_quantities_iblock`。
 
 ### 4.5 `Makefile`
 
